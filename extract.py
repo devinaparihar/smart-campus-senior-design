@@ -1,6 +1,7 @@
 import os
 import sys
 import csv
+import datetime
 
 import numpy as np
 
@@ -12,6 +13,14 @@ def makedir(path):
         os.mkdir(path)
     except:
         print(str(path) + ' directory may already exist')
+
+"""
+Extract some natural features from unix time representation, may be useful to toy with this later
+"""
+def unix_time_to_features(unix_time):
+    dt = datetime.datetime.fromtimestamp(unix_time, tz=datetime.timezone(-datetime.timedelta(hours=6)))
+    features = [dt.weekday(), dt.hour, dt.minute, dt.second]
+    return features
 
 """
 Given a file (csv) creates a different numpy matrix for each publisher_id
@@ -29,15 +38,13 @@ def extract_from_file(file_path, output_dir):
                 for i, column_label in enumerate(row):
                     column_to_index[column_label] = i
             else:
-                key = row[column_to_index['publisher_id']]
+                key = row[column_to_index['advertiser_id']]
                 data_point = []
-                data_point.append(int(row[column_to_index['location_at']]))
+                unix_time = int(row[column_to_index['location_at']])
+                data_point.append(unix_time)
                 data_point.append(float(row[column_to_index['latitude']]))
                 data_point.append(float(row[column_to_index['longitude']]))
-                try:
-                    data_point.append(float(row[column_to_index['altitude']]))
-                except:
-                    data_point.append(0)
+                data_point.extend(unix_time_to_features(unix_time))
                 if key not in individual_data.keys():
                     individual_data[key] = []
                 individual_data[key].append(data_point)
