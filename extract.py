@@ -54,6 +54,31 @@ def extract_from_file(file_path, output_dir):
         mat = mat[mat[:, 0].argsort()]
         np.save(os.path.join(output_dir, str(key)), mat)
 
+def extract_from_file_sample_size(file_path, sample_size):
+    data = []
+    with open(os.path.join(file_path)) as csvfile:
+            reader = csv.reader(csvfile)
+            column_to_index = None
+            for i, row in enumerate(reader):
+                if column_to_index is None:
+                    column_to_index = {}
+                    for i, column_label in enumerate(row):
+                        column_to_index[column_label] = i
+                else:
+                    data_point = []
+                    unix_time = int(row[column_to_index['location_at']])
+                    data_point.append(row[column_to_index['advertiser_id']])
+                    data_point.append(unix_time)
+                    data_point.append(float(row[column_to_index['latitude']]))
+                    data_point.append(float(row[column_to_index['longitude']]))
+                    data.append(data_point)
+    data = np.array(data)
+    if sample_size < data.shape[0]:
+        size = sample_size
+    else:
+        size = data.shape[0]
+    return data[np.random.choice(data.shape[0], size=size, replace=False)]
+
 """
 Do the extraction for each month and each day in every month where the
 files for each month and day are stored like this in the root directory:
@@ -77,6 +102,16 @@ def traverse_files(raw_data_root, individual_data_root):
             individual_f_dir_path = os.path.join(individual_d_path, os.path.splitext(f)[0])
             makedir(individual_f_dir_path)
             extract_from_file(os.path.join(raw_d_path, f), individual_f_dir_path)
+
+def sample_per_day(raw_data_root, sample_size):
+    directory_list = [f for f in os.listdir(raw_data_root) if not os.path.isfile(os.path.join(raw_data_root, f))]
+    data = []
+    for d in directory_list:
+        raw_d_path = os.path.join(raw_data_root, d)
+        file_list = [f for f in os.listdir(raw_d_path) if os.path.isfile(os.path.join(raw_d_path, f))]
+        for f in file_list:
+            data.append(extract_from_file_sample_size(os.path.join(raw_d_path, f), sample_size))
+    return np.concatenate(data)
 
 """
 First argument is raw data root directory and second is output, individual data root directory
