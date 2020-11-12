@@ -5,7 +5,7 @@ import torch.optim as optim
 import torch.distributions as distributions
 
 INPUT_SIZE = 2
-HIDDEN_STATE_SIZE = 8
+HIDDEN_STATE_SIZE = 16
 OUTPUT_SIZE = 5
 
 class DeepLSTM(nn.Module):
@@ -30,9 +30,13 @@ class DeepLSTM(nn.Module):
             h_2_t, c_2_t = self.lstm2(x_2_t, (h_2_tm1, c_2_tm1))
             x_3_t = torch.cat((x_t, h_2_t), dim=1)
             y_t = self.l1(x_3_t)
-            y_list.append(y_t)
-        return torch.stack(y_list, dim=1)
 
+            y_list.append(y_t)
+            h_1_tm1 = h_1_t
+            c_1_tm1 = c_1_t
+            h_2_tm1 = h_2_t
+            c_2_tm1 = c_2_t
+        return torch.stack(y_list, dim=1)
 
 """
 means = torch.from_numpy(np.array([[0, 0], [1, 1]])).float()
@@ -59,34 +63,46 @@ print(-1 * dist.log_prob(samples))
 exit()
 """
 
-
-def y_to_dist(y):
+def y_to_params(y):
     mu_1 = y.narrow(2, 0, 1)
     mu_2 = y.narrow(2, 1, 1)
     sigma_1 = torch.exp(y.narrow(2, 2, 1))
+    sigma_1 = torch.clamp(sigma_1, 0.01, 100)
     sigma_2 = torch.exp(y.narrow(2, 3, 1))
-    rho = torch.tanh(y.narrow(2, 4, 1))
+    sigma_2 = torch.clamp(sigma_2, 0.01, 100)
+    rho = torch.clamp(torch.tanh(y.narrow(2, 4, 1)), -0.99, 0.99)
     cov = sigma_1 * sigma_2 * rho
     means = torch.cat((mu_1, mu_2), dim=2)
-    print(means)
     cov_matrices = torch.cat((sigma_1 * sigma_1, cov, cov, sigma_2 * sigma_2), dim=2).view(y.size()[0], y.size()[1], 2, 2)
-    return distributions.multivariate_normal.MultivariateNormal(means, cov_matrices)
+    return means, cov_matrices
 
 net = DeepLSTM()
-optimizer = optim.Adam(net.parameters(), lr=0.005)
+optimizer = optim.Adam(net.parameters(), lr=0.002)
 
 traj1 = torch.tensor([[0., 0.], [1., 2.], [3., 3.], [4., 3.]])
 traj2 = torch.tensor([[0., 0.], [2., 2.], [3., 3.], [5., 2.]])
 traj3 = torch.tensor([[0., 0.], [2., 1.], [3., 3.], [4., 2.]])
 x = torch.stack([traj1, traj2, traj3], dim=0)
 y_true = x.narrow(1, 1, x.size()[1] - 1)
+x_train = x.narrow(1, 0, x.size()[1] - 1)
 
-for i in range(500):
-    print(i)
-    optimizer.zero_grad()
-    y = net.forward(x).narrow(1, 1, x.size()[1] - 1)
-    dist = y_to_dist(y)
-    loss = -1 * torch.sum(dist.log_prob(y_true))
-    print(y_true)
-    loss.backward()
-    optimizer.step()
+min_loss = np.inf
+min_means = None
+min_cov = None
+for state in range(1000):
+    print(state)
+    for i in range(500):
+        optimizer.zero_grad()
+        y = net.forward(x_train)
+        means, cov_matrices = y_to_params(y)
+        dist = distributions.multivariate_normal.MultivariateNormal(means, covariance_matrix=cov_matrices)
+        loss = -1 * torch.sum(dist.log_prob(y_true))
+        if loss.item() < min_loss:
+            min_loss = loss.item()
+            min_means = means
+            min_cov = cov_matrices
+        loss.backward()
+        optimizer.step()
+    print(min_loss)
+    print(min_means)
+    print(min_cov)
