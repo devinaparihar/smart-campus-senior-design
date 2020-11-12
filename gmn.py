@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.distributions as distributions
 
 INPUT_SIZE = 2
@@ -24,17 +25,12 @@ class DeepLSTM(nn.Module):
         for i in range(x.size()[1]):
             x_t = torch.squeeze(x.narrow(1, i, 1), 1)
             x_1_t = x_t
-            print("x_1_{} = {}".format(i, x_1_t))
             h_1_t, c_1_t = self.lstm1(x_1_t, (h_1_tm1, c_1_tm1))
-            print(x_t.size(), h_1_t.size(), c_1_t.size())
             x_2_t = torch.cat((x_t, h_1_t), dim=1)
-            print("x_1_{} = {}".format(i, x_2_t))
             h_2_t, c_2_t = self.lstm2(x_2_t, (h_2_tm1, c_2_tm1))
             x_3_t = torch.cat((x_t, h_2_t), dim=1)
-            print("x_1_{} = {}".format(i, x_3_t))
             y_t = self.l1(x_3_t)
             y_list.append(y_t)
-            print("y_{} = {}".format(i, y_t))
         return torch.stack(y_list, dim=1)
 
 
@@ -72,17 +68,25 @@ def y_to_dist(y):
     rho = torch.tanh(y.narrow(2, 4, 1))
     cov = sigma_1 * sigma_2 * rho
     means = torch.cat((mu_1, mu_2), dim=2)
+    print(means)
     cov_matrices = torch.cat((sigma_1 * sigma_1, cov, cov, sigma_2 * sigma_2), dim=2).view(y.size()[0], y.size()[1], 2, 2)
     return distributions.multivariate_normal.MultivariateNormal(means, cov_matrices)
 
 net = DeepLSTM()
+optimizer = optim.Adam(net.parameters(), lr=0.005)
 
 traj1 = torch.tensor([[0., 0.], [1., 2.], [3., 3.], [4., 3.]])
 traj2 = torch.tensor([[0., 0.], [2., 2.], [3., 3.], [5., 2.]])
 traj3 = torch.tensor([[0., 0.], [2., 1.], [3., 3.], [4., 2.]])
 x = torch.stack([traj1, traj2, traj3], dim=0)
+y_true = x.narrow(1, 1, x.size()[1] - 1)
 
-y = net.forward(x)
-print(y)
-print(y.shape)
-print(y_to_dist(y))
+for i in range(500):
+    print(i)
+    optimizer.zero_grad()
+    y = net.forward(x).narrow(1, 1, x.size()[1] - 1)
+    dist = y_to_dist(y)
+    loss = -1 * torch.sum(dist.log_prob(y_true))
+    print(y_true)
+    loss.backward()
+    optimizer.step()
