@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 def rand_circle_points():
     radius = np.random.uniform(1, 5)
-    noise_std = radius / 10
+    noise_std = radius / 20
     direction = np.random.binomial(1, 0.5)
     center = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10)])
     division = np.random.randint(10, 20)

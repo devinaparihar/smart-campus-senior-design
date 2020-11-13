@@ -126,8 +126,9 @@ class DeepLSTM(nn.Module):
             means, cov_matrices = y_to_params(torch.stack([y_tm1], dim=1))
             print("Mean: {}".format(means))
             print("Covariance: {}".format(means))
-            dist = distributions.multivariate_normal.MultivariateNormal(means, covariance_matrix=cov_matrices)
-            x_t = dist.sample().squeeze(dim=1)
+#            dist = distributions.multivariate_normal.MultivariateNormal(means, covariance_matrix=cov_matrices)
+#            x_t = dist.sample().squeeze(dim=1)
+            x_t = means.squeeze(dim=0)
             new_points.append(x_t)
             y_tm1, h_1_tm1, c_1_tm1, h_2_tm1, c_2_tm1 = self.step(x_t, h_1_tm1, c_1_tm1, h_2_tm1, c_2_tm1)
 
@@ -140,12 +141,12 @@ def forward_pass_batch(x, mask):
     output = net.forward(x_train)
     means, cov_matrices = y_to_params(output)
     dist = distributions.multivariate_normal.MultivariateNormal(means, covariance_matrix=cov_matrices)
-    loss = -1 * torch.sum(dist.log_prob(y_train) * mask_train)
+    loss = -1 * torch.sum(dist.log_prob(y_train) * mask_train) / y_train.size()[0]
     if loss.requires_grad:
         loss.register_hook(lambda x: x.clamp(min=-1 * LOSS_GRAD_CLIP, max=LOSS_GRAD_CLIP))
     return loss, means, y_train, mask
 
-DIR = "./images/"
+DIR = "./images2/"
 def save_as_image(input_points, generated_points, name):
     plt.figure()
     np_input = input_points.cpu().numpy()[0]
@@ -154,6 +155,7 @@ def save_as_image(input_points, generated_points, name):
     plt.scatter(np_gen[:, 0].ravel(), np_gen[:, 1].ravel(), c='r', label='generated points')
     plt.legend()
     plt.savefig(DIR + str(name) + ".png")
+    plt.close()
 
 """
 traj1 = torch.tensor([[0., 0.], [1., 2.], [3., 3.], [4., 3.]])
@@ -194,13 +196,13 @@ for state in range(1):
             if test_loss.item() < min_loss:
                 min_loss = test_loss.cpu().item()
                 x, mask = sample(val_data, val_mask, 1)
-                test_loss, means, y_test, mask_test = forward_pass_batch(x, mask)
+                loss, means, y_test, mask_test = forward_pass_batch(x, mask)
                 min_means = means
                 min_y = y_test
                 min_mask = mask_test
                 np_mask = mask.cpu().numpy()
                 n = max([i + 1 if np_mask[0, i] == 1 else 0 for i in range(np_mask.shape[1])])
-                k = np.random.randint(1, n - 6)
+                k = np.random.randint(3, n - 6)
                 x_cut = x.narrow(1, 0, n - k)
                 print("SAMPLE GENERATION")
                 print("Input:\n{}".format(x_cut))
@@ -211,7 +213,7 @@ for state in range(1):
                 loss, means, y, mask = forward_pass_batch(x, mask)
                 print("Means:\n{}".format(means))
                 print("Target:\n{}".format(y))
-                save_as_image(x_cut, x_gen, "Epoch_" + str(i) + "_TestLoss_" + str(test_loss.cpu().item()))
+                save_as_image(x_cut, x_gen, "Epoch_{:04d}_TestLoss_{}".format(i, test_loss.cpu().item()))
 
         print("Min test loss: {}".format(min_loss))
         print("Min test loss difference:\n{}".format(torch.abs(min_means - min_y)))
