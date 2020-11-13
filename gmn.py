@@ -8,6 +8,8 @@ INPUT_SIZE = 2
 HIDDEN_STATE_SIZE = 16
 OUTPUT_SIZE = 5
 
+GRAD_CLIP = 10
+
 class DeepLSTM(nn.Module):
 
     def __init__(self):
@@ -26,8 +28,20 @@ class DeepLSTM(nn.Module):
             x_t = torch.squeeze(x.narrow(1, i, 1), 1)
             x_1_t = x_t
             h_1_t, c_1_t = self.lstm1(x_1_t, (h_1_tm1, c_1_tm1))
+
+            if h_1_t.requires_grad:
+                h_1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
+            if c_1_t.requires_grad:
+                c_1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
+
             x_2_t = torch.cat((x_t, h_1_t), dim=1)
             h_2_t, c_2_t = self.lstm2(x_2_t, (h_2_tm1, c_2_tm1))
+
+            if h_2_t.requires_grad:
+                h_2_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
+            if c_2_t.requires_grad:
+                c_2_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
+
             x_3_t = torch.cat((x_t, h_2_t), dim=1)
             y_t = self.l1(x_3_t)
 
@@ -76,9 +90,6 @@ def y_to_params(y):
     cov_matrices = torch.cat((sigma_1 * sigma_1, cov, cov, sigma_2 * sigma_2), dim=2).view(y.size()[0], y.size()[1], 2, 2)
     return means, cov_matrices
 
-net = DeepLSTM()
-optimizer = optim.Adam(net.parameters(), lr=0.002)
-
 traj1 = torch.tensor([[0., 0.], [1., 2.], [3., 3.], [4., 3.]])
 traj2 = torch.tensor([[0., 0.], [2., 2.], [3., 3.], [5., 2.]])
 traj3 = torch.tensor([[0., 0.], [2., 1.], [3., 3.], [4., 2.]])
@@ -90,8 +101,10 @@ min_loss = np.inf
 min_means = None
 min_cov = None
 for state in range(1000):
+    net = DeepLSTM()
+    optimizer = optim.Adam(net.parameters(), lr=0.002)
     print(state)
-    for i in range(500):
+    for i in range(1000):
         optimizer.zero_grad()
         y = net.forward(x_train)
         means, cov_matrices = y_to_params(y)
