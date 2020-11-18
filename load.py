@@ -35,7 +35,7 @@ def compile_data_by_individual(month_data):
 
 def load_cleaned_individuals(data_root):
     data = []
-    individual_list = [f for f in os.listdir(data_root) if os.path.isfile(os.path.join(data_root), f))]
+    individual_list = [f for f in os.listdir(data_root) if os.path.isfile(os.path.join(data_root, f))]
     for f in individual_list:
-        data.append(np.load(os.path.join(data_root, i)))
+        data.append(np.load(os.path.join(data_root, f)))
     return data
