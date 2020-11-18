@@ -58,7 +58,7 @@ min_means = None
 min_y = None
 min_mask = None
 
-BATCH_SIZE = 2
+BATCH_SIZE = 64
 LEARNING_RATE = 0.001
 HIDDEN_STATE_SIZE = 256
 N_LAYERS = 2

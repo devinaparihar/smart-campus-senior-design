@@ -11,7 +11,7 @@ OUTPUT_SIZE = 5
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
 
-CUDA = False #cuda.is_available()
+CUDA = cuda.is_available()
 
 def y_to_params(y):
     mu_1 = y.narrow(2, 0, 1)
@@ -55,7 +55,7 @@ class DeepLSTM(nn.Module):
         self.layers = nn.ModuleList(layers_list)
         self.gaussian_params_linear = nn.Linear(INPUT_SIZE + hidden_state_size, OUTPUT_SIZE * n_mixture_components)
         self.weights_linear = nn.Linear(INPUT_SIZE + hidden_state_size, n_mixture_components)
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=-1)
 
     def step(self, x_t, h_tm1, c_tm1):
             x_1_t = x_t
