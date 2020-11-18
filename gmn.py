@@ -41,31 +41,6 @@ def params_to_mixture_model(g_params, weights, components):
     mixture = distributions.mixture_same_family.MixtureSameFamily(categorical, dist)
     return mixture, means
 
-def numpy_data_to_pytorch(l_in):
-    max_len = max([x.shape[0] for x in l_in])
-    data_l = []
-    mask_l = []
-    for x in l_in:
-        pytorch_x = torch.from_numpy(x).float()
-        n = x.shape[0]
-        k = max_len - n
-        mask = torch.ones((n,))
-        if k > 0:
-            mask = torch.cat([mask, torch.zeros((k,))], dim=0)
-            pytorch_x = torch.cat([pytorch_x, torch.zeros((k, 2))], dim=0)
-        if CUDA:
-            mask = mask.cuda()
-            pytorch_x = pytorch_x.cuda()
-        data_l.append(pytorch_x)
-        mask_l.append(mask)
-    return data_l, mask_l
-
-def sample(data_l, mask_l, size):
-    indices = np.random.choice(len(data_l), size=size, replace=False)
-    data_stack = [data_l[i] for i in indices]
-    mask_stack = [mask_l[i] for i in indices]
-    return torch.stack(data_stack), torch.stack(mask_stack)
-
 class DeepLSTM(nn.Module):
 
     def __init__(self, n_hidden_layers, hidden_state_size, n_mixture_components):
