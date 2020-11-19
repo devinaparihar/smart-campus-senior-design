@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from load import load_cleaned_individuals
 from gmn import *
 
-CUDA = cuda.is_available()
+CUDA = False #cuda.is_available()
 SCALE_FACTOR = 1
 def normalize_data(data, lat_index=1, long_index=2):
     latitudes = []
@@ -49,6 +49,17 @@ def sample_data(data, length, batch_size):
         stack_list.append(x.narrow(0, start, length))
     return torch.stack(stack_list)
 
+def pytorch_to_scaled_numpy(pt_x, lat_mean, lat_std, long_mean, long_std, lat_index=0, long_index=1):
+    x = pt_x.cpu().numpy()[0]
+    lat_vec = x[:, lat_index] * lat_std / SCALE_FACTOR + lat_mean
+    long_vec = x[:, long_index] * long_std / SCALE_FACTOR + long_mean
+    return np.transpose(np.stack([lat_vec, long_vec]))
+
+DIR = "sample_trajectories/"
+def save_trajectory(provided, generated, model, epoch, lr, test_error):
+    name = "{:04d}_{:04d}_{}_{}.npy".format(model, epoch, lr, test_error)
+    np.save(DIR + name, (provided, generated))
+
 LENGTH_MIN = 200
 TEST_SET_RATIO = 0.05
 TRAIN_LENGTH = LENGTH_MIN
@@ -67,10 +78,13 @@ print("Training set size: {}\nTest set size: {}".format(len(train_data), len(tes
 
 
 BATCH_SIZE = 64
-LEARNING_RATE = 0.001
 HIDDEN_STATE_SIZE = 400
 N_LAYERS = 3
 N_COMPONENTS = 20
+N_GENERATE = 20
+
+LR_UP = 0.05
+LR_LO = 0.00005
 
 mask = torch.cat((torch.zeros((BATCH_SIZE, MASK_NUMBER)), torch.ones((BATCH_SIZE, TRAIN_LENGTH - MASK_NUMBER))), dim=1)
 if CUDA:
@@ -78,12 +92,16 @@ if CUDA:
 
 print("Beginning training")
 
-for state in range(1):
+for state in range(100):
     print("Model: {}".format(state))
     net = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, N_COMPONENTS)
+    lr = np.exp(np.random.uniform(low=np.log(LR_LO), high=np.log(LR_UP)))
+
     if CUDA:
         net = net.cuda()
-    optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(net.parameters(), lr=lr)
+
+    min_loss = np.inf
 
     for i in range(5000):
         print("Epoch: {}".format(i))
@@ -95,5 +113,18 @@ for state in range(1):
         print("Training Loss: {}".format(train_loss.item()))
         with torch.no_grad():
             x = sample_data(test_data, TRAIN_LENGTH, BATCH_SIZE)
-            test_loss, means, y_test, mask_test = forward_pass_batch(net, x, mask, N_COMPONENTS)
+            test_loss, _, _, _ = forward_pass_batch(net, x, mask, N_COMPONENTS)
             print("Test Loss: {}".format(test_loss.item()))
+            if test_loss.cpu().item() < min_loss:
+                min_loss = test_loss.cpu().item()
+                x = sample_data(test_data, TRAIN_LENGTH, 1)
+                n = x.size()[1]
+                k = N_GENERATE
+                x_cut = x.narrow(1, 0, n - k)
+                x_gen = net.generate(x_cut, k)
+                np_x_cut = pytorch_to_scaled_numpy(x_cut, lat_mean, lat_std, long_mean, long_std)
+                np_x_gen = pytorch_to_scaled_numpy(x_gen, lat_mean, lat_std, long_mean, long_std)
+                save_trajectory(np_x_cut, np_x_gen, state + 1, i + 1, lr, test_loss.cpu().item())
+
+        print("Min test loss: {}".format(min_loss))
+

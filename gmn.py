@@ -11,7 +11,7 @@ OUTPUT_SIZE = 5
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
 
-CUDA = cuda.is_available()
+CUDA = False #cuda.is_available()
 
 def y_to_params(y):
     mu_1 = y.narrow(2, 0, 1)
