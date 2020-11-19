@@ -183,6 +183,18 @@ public class MainActivity extends AppCompatActivity implements OnClickListener{
     }
 
     @Override
+    protected void onDestroy() {
+        Log.d(TAG, "MainActivity onDestroy()");
+        if (alarms != null) alarms.cancel(recurringLl24);
+        if (timer != null) timer.cancel();
+        android.app.NotificationManager mNotificationManager = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        mNotificationManager.cancel(0);
+        Intent scanService = new Intent(this, ScanService.class);
+        stopService(scanService);
+        super.onDestroy();
+    }
+
+    @Override
     public void onClick(View v) {
         amplifyApp.sendMessage("Test number 2");
     }
