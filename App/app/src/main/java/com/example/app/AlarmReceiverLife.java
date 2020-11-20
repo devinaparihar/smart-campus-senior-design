@@ -2,6 +2,7 @@ package com.example.app;
 
 //Imported from find3 by schollz
 
+import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -19,6 +20,7 @@ public class AlarmReceiverLife extends BroadcastReceiver {
     private static final String TAG = "AlarmReceiverLife";
     static Context context;
 
+    @SuppressLint("InvalidWakeLockTag")
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.v(TAG, "Recurring alarm");
