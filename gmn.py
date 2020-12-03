@@ -126,7 +126,7 @@ class DeepLSTM(nn.Module):
             stacked_g_params = torch.stack([g_params_tm1], dim=1)
             stacked_weights = torch.stack([weights_tm1], dim=1)
             dist, _ = params_to_mixture_model(stacked_g_params, stacked_weights, self.n_mixture_components)
-            x_t = dist.mean.squeeze(dim=0)
+            x_t = dist.sample().squeeze(dim=0)
             new_points.append(x_t)
             g_params_tm1, weights_tm1, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1)
 

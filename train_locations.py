@@ -103,7 +103,7 @@ for state in range(100):
 
     min_loss = np.inf
 
-    for i in range(5000):
+    for i in range(500):
         print("Epoch: {}".format(i))
         optimizer.zero_grad()
         x = sample_data(train_data, TRAIN_LENGTH, BATCH_SIZE)
