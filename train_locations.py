@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from load import load_cleaned_individuals
 from gmn import *
 
-CUDA = False #cuda.is_available()
+CUDA = cuda.is_available()
 SCALE_FACTOR = 1
 def normalize_data(data, lat_index=1, long_index=2):
     latitudes = []
