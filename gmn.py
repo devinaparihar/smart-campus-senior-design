@@ -11,7 +11,7 @@ OUTPUT_SIZE = 5
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
 
-CUDA = False #cuda.is_available()
+CUDA = cuda.is_available()
 
 def y_to_params(y):
     mu_1 = y.narrow(2, 0, 1)
@@ -57,13 +57,12 @@ class DeepLSTM(nn.Module):
         self.weights_linear = nn.Linear(INPUT_SIZE + hidden_state_size, n_mixture_components)
         self.softmax = nn.Softmax(dim=-1)
 
-    def step(self, x_t, h_tm1, c_tm1):
+    def step(self, x_t, h_tm1, c_tm1, final):
             x_1_t = x_t
             h_im1_t, c_im1_t = self.layers[0](x_1_t, (h_tm1[0], c_tm1[0]))
-
             if h_im1_t.requires_grad:
                 h_im1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-            if c_im1_t.requires_grad:
+            if c_im1_t.requires_grad and not final:
                 c_im1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
 
             h_t = [h_im1_t]
@@ -75,7 +74,7 @@ class DeepLSTM(nn.Module):
                 c_t.append(c_i_t)
                 if h_i_t.requires_grad:
                     h_i_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-                if c_i_t.requires_grad:
+                if c_i_t.requires_grad and not final:
                     c_i_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
                 h_im1_t = h_i_t
                 c_im1_t = c_i_t
@@ -106,7 +105,7 @@ class DeepLSTM(nn.Module):
 
         for i in range(x.size()[1]):
             x_t = torch.squeeze(x.narrow(1, i, 1), 1)
-            g_params_t, weights_t, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1)
+            g_params_t, weights_t, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1, i == x.size()[1] - 1)
             g_param_list.append(g_params_t)
             weights_list.append(weights_t)
 
@@ -119,7 +118,7 @@ class DeepLSTM(nn.Module):
 
         for i in range(x.size()[1]):
             x_t = torch.squeeze(x.narrow(1, i, 1), 1)
-            g_params_tm1, weights_tm1, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1)
+            g_params_tm1, weights_tm1, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1, False)
 
         new_points = []
         for i in range(steps):
@@ -128,7 +127,7 @@ class DeepLSTM(nn.Module):
             dist, _ = params_to_mixture_model(stacked_g_params, stacked_weights, self.n_mixture_components)
             x_t = dist.sample().squeeze(dim=0)
             new_points.append(x_t)
-            g_params_tm1, weights_tm1, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1)
+            g_params_tm1, weights_tm1, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1, False)
 
         return torch.stack(new_points, dim=1)
 
