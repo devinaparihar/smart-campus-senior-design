@@ -82,9 +82,9 @@ def random_sample_data(df, length, num_per_user):
 
         if df_len < length * num_per_user:
             continue
-        indices = np.random.choice(df_len - length, size=num_per_user, replace=False)
+        indices = np.random.choice(df_len - length - 1, size=num_per_user, replace=False)
         for i in indices:
-            data.append(mat[i:i+length])
+            data.append(mat[i:i+length + 1])
     return data
 
 '''
