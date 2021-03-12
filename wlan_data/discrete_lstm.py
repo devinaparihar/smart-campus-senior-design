@@ -5,7 +5,7 @@ import pandas as pd
 
 from torch import nn, optim
 
-from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data
+from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split
 
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
@@ -112,47 +112,57 @@ with open('id_to_int.pickle', 'wb') as handle:
     pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
 """
 
-df = pd.read_csv("OneHot.csv")
-
-HIDDEN_STATE_SIZE = 100
-N_LAYERS = 3
-DIM = df.values.shape[1] - 2
-LR = 0.01
-
 N_EPOCHS = 500
 TRAIN_LENGTH = 10
 N_PER_USER = 5
 CUDA = torch.cuda.is_available()
 
-network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
-if CUDA:
-    network = network.cuda()
-optimizer = optim.Adam(network.parameters(), lr=LR)
-loss = nn.CrossEntropyLoss()
+df = pd.read_csv("OneHot.csv")
 
-best_accuracies = [0, 0, 0, 0]
-test_steps = [1, 2, 5, 9]
+N_SPLITS = 50
+HIDDEN_STATE_SIZE = 100
+N_LAYERS = 3
+DIM = df.values.shape[1] - 2
+LR = 0.01
 
-for i in range(N_EPOCHS):
-    print("Epoch: {}".format(i))
-    optimizer.zero_grad()
-    x = np.array(random_sample_data(df, TRAIN_LENGTH, N_PER_USER))
-    x = torch.from_numpy(x).float()
-    train_loss = forward_pass_batch(network, x, loss)
-    train_loss.backward()
-    print("Training Loss: {}".format(train_loss.item()))
-    optimizer.step()
-    with torch.no_grad():
-        for j, n in enumerate(test_steps):
-            data = np.array(random_sample_data(df, n + 1, N_PER_USER))
-            x = torch.from_numpy(data[:, :-1]).float()
-            y = np.argmax(data[:, -1], axis=1)
-            output = np.argmax(network.forward_next_step(x).numpy(), axis=1)
-            total = y.shape[0]
-            correct = np.sum(np.equal(y, output))
-            accuracy = correct / total
-            if best_accuracies[j] < accuracy:
-                best_accuracies[j] = accuracy
-                print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
-print("Best Accuracies: {}".format(best_accuracies))
-print("Test Steps: {}".format(test_steps))
+test_steps = [1, 2, 3, 4, 9]
+means = np.zeros((len(test_steps),))
+
+for split in range(N_SPLITS):
+    print("Split: {}".format(split + 1))
+    train_df, test_df = sequence_train_test_split(df, TRAIN_LENGTH)
+
+    network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
+    if CUDA:
+        network = network.cuda()
+    optimizer = optim.Adam(network.parameters(), lr=LR)
+    loss = nn.CrossEntropyLoss()
+
+    best_accuracies = [0 for i in range(len(test_steps))]
+
+    for i in range(N_EPOCHS):
+#        print("Epoch: {}".format(i))
+        optimizer.zero_grad()
+        x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
+        x = torch.from_numpy(x).float()
+        train_loss = forward_pass_batch(network, x, loss)
+        train_loss.backward()
+#        print("Training Loss: {}".format(train_loss.item()))
+        optimizer.step()
+        with torch.no_grad():
+            for j, n in enumerate(test_steps):
+                data = np.stack(random_sample_data(test_df, n + 1, TRAIN_LENGTH // (n + 1)))
+                x = torch.from_numpy(data[:, :-1]).float()
+                y = np.argmax(data[:, -1], axis=1)
+                output = np.argmax(network.forward_next_step(x).numpy(), axis=1)
+                total = y.shape[0]
+                correct = np.sum(np.equal(y, output))
+                accuracy = correct / total
+                if best_accuracies[j] < accuracy:
+                    best_accuracies[j] = accuracy
+#                    print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
+    print("Best Accuracies: {}".format(best_accuracies))
+    print("Test Steps: {}".format(test_steps))
+
+    means += np.array(best_accuracies)
+    print("Mean Accuracies: {}".format(means / (split + 1)))

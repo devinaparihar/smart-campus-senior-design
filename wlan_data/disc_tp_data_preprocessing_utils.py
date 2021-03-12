@@ -74,6 +74,47 @@ def sample_data(data, sample_length, num_points_to_predict):
 
   return X_dat, y_dat
 
+def sequence_train_test_split(df, length):
+    user_sample_pool = []
+    train_users = []
+    test_users = []
+    for user, df_user in df.groupby('USERID'):
+        df_len = len(df_user)
+        if df_len < 3 * length:
+            train_users.append(df_user)
+        else:
+            user_sample_pool.append(df_user)
+
+    user_index = max(df['USERID'].tolist()) + 1
+    total_len = len(df)
+    test_len = 0
+    while test_len < 0.1 * total_len:
+        df_idx = np.random.choice(len(user_sample_pool))
+        sample_df = user_sample_pool.pop(df_idx)
+        seq_idx = np.random.choice(np.arange(length, len(sample_df) - length))
+        a = sample_df.iloc[0:seq_idx]
+        if len(a) < 3 * length:
+            train_users.append(a)
+        else:
+            user_sample_pool.append(a)
+
+        b = sample_df.iloc[seq_idx:seq_idx + length]
+        b.loc[:, 'USERID'] = user_index
+        test_users.append(b)
+        test_len += len(b)
+        user_index += 1
+
+        c = sample_df.iloc[seq_idx + length:]
+        c.loc[:, 'USERID'] = float(user_index)
+        if len(c) < 3 * length:
+            train_users.append(c)
+        else:
+            user_sample_pool.append(c)
+        user_index += 1
+
+    train_users.extend(user_sample_pool)
+    return pd.concat(train_users), pd.concat(test_users)
+
 def random_sample_data(df, length, num_per_user):
     data = []
     for user, df_user in df.groupby('USERID'):
@@ -82,9 +123,9 @@ def random_sample_data(df, length, num_per_user):
 
         if df_len < length * num_per_user:
             continue
-        indices = np.random.choice(df_len - length - 1, size=num_per_user, replace=False)
+        indices = np.random.choice(df_len - length + 1, size=num_per_user, replace=False)
         for i in indices:
-            data.append(mat[i:i+length + 1])
+            data.append(mat[i:i+length])
     return data
 
 '''
