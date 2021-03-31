@@ -80,10 +80,13 @@ class DeepLSTM(nn.Module):
         outputs = self.forward(x)
         return outputs.index_select(1, torch.tensor([outputs.size()[1] - 1])).squeeze(dim=1)
 
-def forward_pass_batch(net, x, loss):
+def forward_pass_batch(net, x, loss, lossMSE):
+
+    # NEED TO FIX THIS SECTION
     x_train = x.narrow(1, 0, x.size()[1] - 1)
+    x_train_without_dur = x_train.narrow(2, 0, x.size()[2] - 1)
     y_train = torch.argmax(x.narrow(1, 1, x.size()[1] - 1), dim=2)
-    probs = net.forward(x_train)
+    probs = net.forward(x_train_without_dur)
     train_loss = loss(probs.permute(0, 2, 1), y_train)
     if train_loss.requires_grad:
         train_loss.register_hook(lambda x: x.clamp(min=-1 * LOSS_GRAD_CLIP, max=LOSS_GRAD_CLIP))
@@ -98,19 +101,25 @@ def numpy_data_to_pytorch(data):
         output_list.append(pytorch_x)
     return output_list
 
-"""
+
 df = pd.read_csv("TrainingData.csv")
 df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
 df_sorted_transitions = get_transitions_only(df_sorted)
-
 one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
+
+# get duration in space
+df_sorted_transitions = get_durations(df_sorted_transitions)
+df_sorted_transitions['DURATION_IN_SPACE_MINUTES'] = df_sorted_transitions['DURATION_IN_SPACE_SECONDS'].apply(lambda x: x/60 if type(x) is float else -1)
+
+# append duration as feature to one hot encoded df
+one_hot_df['100'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
 
 one_hot_df.to_csv("OneHot.csv", index=False)
 with open('int_to_id.pickle', 'wb') as handle:
     pickle.dump(int_to_id, handle, protocol=pickle.HIGHEST_PROTOCOL)
 with open('id_to_int.pickle', 'wb') as handle:
     pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
-"""
+
 
 N_EPOCHS = 500
 TRAIN_LENGTH = 10
@@ -118,6 +127,7 @@ N_PER_USER = 5
 CUDA = torch.cuda.is_available()
 
 df = pd.read_csv("OneHot.csv")
+#df = one_hot_df
 
 N_SPLITS = 50
 HIDDEN_STATE_SIZE = 100
@@ -136,7 +146,9 @@ for split in range(N_SPLITS):
     if CUDA:
         network = network.cuda()
     optimizer = optim.Adam(network.parameters(), lr=LR)
-    loss = nn.CrossEntropyLoss()
+    loss1 = nn.CrossEntropyLoss()
+
+    loss2 = torch.nn.MSELoss()
 
     best_accuracies = [0 for i in range(len(test_steps))]
 
@@ -145,9 +157,9 @@ for split in range(N_SPLITS):
         optimizer.zero_grad()
         x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
         x = torch.from_numpy(x).float()
-        train_loss = forward_pass_batch(network, x, loss)
-        train_loss.backward()
-#        print("Training Loss: {}".format(train_loss.item()))
+        train_loss_1 = forward_pass_batch(network, x, loss1, loss2)
+        train_loss_1.backward()
+#        print("Training Loss: {}".format(train_loss_1.item()))
         optimizer.step()
         with torch.no_grad():
             for j, n in enumerate(test_steps):
@@ -160,7 +172,7 @@ for split in range(N_SPLITS):
                 accuracy = correct / total
                 if best_accuracies[j] < accuracy:
                     best_accuracies[j] = accuracy
-#                    print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
+                    #print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
     print("Best Accuracies: {}".format(best_accuracies))
     print("Test Steps: {}".format(test_steps))
 
