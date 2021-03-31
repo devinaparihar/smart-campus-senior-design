@@ -9,6 +9,7 @@ Original file is located at
 
 import numpy as np
 import pandas as pd
+import datetime
 
 '''
 function to remove all non-changing adjacent points in a list
