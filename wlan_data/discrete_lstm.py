@@ -5,7 +5,7 @@ import pandas as pd
 
 from torch import nn, optim
 
-from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split
+from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split, split_trajectories, get_durations
 
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
@@ -23,7 +23,6 @@ class DeepLSTM(nn.Module):
             layers_list.append(nn.LSTMCell(dim + hidden_state_size, hidden_state_size))
         self.layers = nn.ModuleList(layers_list)
         self.linear = nn.Linear(dim + hidden_state_size, dim)
-        self.softmax = nn.Softmax(dim=-1)
 
     def step(self, x_t, h_tm1, c_tm1, final):
             x_1_t = x_t
@@ -48,7 +47,7 @@ class DeepLSTM(nn.Module):
                 c_im1_t = c_i_t
 
             x_n_t = torch.cat((x_t, h_im1_t), dim=1)
-            outputs = self.softmax(self.linear(x_n_t))
+            outputs = self.linear(x_n_t)
 
             return outputs, h_t, c_t
 
@@ -80,14 +79,12 @@ class DeepLSTM(nn.Module):
         outputs = self.forward(x)
         return outputs.index_select(1, torch.tensor([outputs.size()[1] - 1])).squeeze(dim=1)
 
-def forward_pass_batch(net, x, loss, lossMSE):
-
-    # NEED TO FIX THIS SECTION
+SOFTMAX = nn.Softmax(dim=-1)
+def forward_pass_batch(net, x, lossCE, num_CE, lossMSE, NUM_MSE):
     x_train = x.narrow(1, 0, x.size()[1] - 1)
-    x_train_without_dur = x_train.narrow(2, 0, x.size()[2] - 1)
-    y_train = torch.argmax(x.narrow(1, 1, x.size()[1] - 1), dim=2)
-    probs = net.forward(x_train_without_dur)
-    train_loss = loss(probs.permute(0, 2, 1), y_train)
+    y_train = torch.argmax(x.narrow(1, 1, x.size()[1] - 1).narrow(2, 0, num_CE), dim=2)
+    probs = SOFTMAX(net.forward(x_train).narrow(2, 0, num_CE))
+    train_loss = lossCE(probs.permute(0, 2, 1), y_train)
     if train_loss.requires_grad:
         train_loss.register_hook(lambda x: x.clamp(min=-1 * LOSS_GRAD_CLIP, max=LOSS_GRAD_CLIP))
     return train_loss
@@ -101,10 +98,12 @@ def numpy_data_to_pytorch(data):
         output_list.append(pytorch_x)
     return output_list
 
+TIMEGAP_THRESH = 3600
+NUM_USERS = 19
 
 df = pd.read_csv("TrainingData.csv")
 df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
-df_sorted_transitions = get_transitions_only(df_sorted)
+df_sorted_transitions = split_trajectories(get_transitions_only(df_sorted), TIMEGAP_THRESH, NUM_USERS)
 one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
 
 # get duration in space
@@ -112,7 +111,7 @@ df_sorted_transitions = get_durations(df_sorted_transitions)
 df_sorted_transitions['DURATION_IN_SPACE_MINUTES'] = df_sorted_transitions['DURATION_IN_SPACE_SECONDS'].apply(lambda x: x/60 if type(x) is float else -1)
 
 # append duration as feature to one hot encoded df
-one_hot_df['100'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
+one_hot_df['STAYING_TIME'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
 
 one_hot_df.to_csv("OneHot.csv", index=False)
 with open('int_to_id.pickle', 'wb') as handle:
@@ -120,10 +119,10 @@ with open('int_to_id.pickle', 'wb') as handle:
 with open('id_to_int.pickle', 'wb') as handle:
     pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-
 N_EPOCHS = 500
 TRAIN_LENGTH = 10
-N_PER_USER = 5
+N_PER_USER = 2
+
 CUDA = torch.cuda.is_available()
 
 df = pd.read_csv("OneHot.csv")
@@ -133,6 +132,7 @@ N_SPLITS = 50
 HIDDEN_STATE_SIZE = 100
 N_LAYERS = 3
 DIM = df.values.shape[1] - 2
+N_LOCATIONS = DIM - 1
 LR = 0.01
 
 test_steps = [1, 2, 3, 4, 9]
@@ -147,19 +147,18 @@ for split in range(N_SPLITS):
         network = network.cuda()
     optimizer = optim.Adam(network.parameters(), lr=LR)
     loss1 = nn.CrossEntropyLoss()
-
     loss2 = torch.nn.MSELoss()
 
     best_accuracies = [0 for i in range(len(test_steps))]
 
     for i in range(N_EPOCHS):
-#        print("Epoch: {}".format(i))
+        print("Epoch: {}".format(i))
         optimizer.zero_grad()
         x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
         x = torch.from_numpy(x).float()
-        train_loss_1 = forward_pass_batch(network, x, loss1, loss2)
+        train_loss_1 = forward_pass_batch(network, x, loss1, N_LOCATIONS, loss2, 1)
         train_loss_1.backward()
-#        print("Training Loss: {}".format(train_loss_1.item()))
+        print("Training Loss: {}".format(train_loss_1.item()))
         optimizer.step()
         with torch.no_grad():
             for j, n in enumerate(test_steps):
