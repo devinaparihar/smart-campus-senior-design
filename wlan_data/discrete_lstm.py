@@ -152,19 +152,19 @@ for split in range(N_SPLITS):
     best_accuracies = [0 for i in range(len(test_steps))]
 
     for i in range(N_EPOCHS):
-        print("Epoch: {}".format(i))
+        #print("Epoch: {}".format(i))
         optimizer.zero_grad()
         x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
         x = torch.from_numpy(x).float()
         train_loss_1 = forward_pass_batch(network, x, loss1, N_LOCATIONS, loss2, 1)
         train_loss_1.backward()
-        print("Training Loss: {}".format(train_loss_1.item()))
+        #print("Training Loss: {}".format(train_loss_1.item()))
         optimizer.step()
         with torch.no_grad():
             for j, n in enumerate(test_steps):
                 data = np.stack(random_sample_data(test_df, n + 1, TRAIN_LENGTH // (n + 1)))
                 x = torch.from_numpy(data[:, :-1]).float()
-                y = np.argmax(data[:, -1], axis=1)
+                y = np.argmax(data[:, -1, :-1], axis=1)
                 output = np.argmax(network.forward_next_step(x).numpy(), axis=1)
                 total = y.shape[0]
                 correct = np.sum(np.equal(y, output))
