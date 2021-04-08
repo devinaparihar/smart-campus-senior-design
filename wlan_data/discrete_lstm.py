@@ -37,6 +37,8 @@ class DeepLSTM(nn.Module):
             c_t = [c_im1_t]
             for i in range(self.n_hidden_layers - 1):
                 x_i_t = torch.cat((x_t, h_im1_t), dim=1)
+                if CUDA:
+                           x_i_t.cuda() 
                 h_i_t, c_i_t = self.layers[i + 1](x_i_t, (h_tm1[i + 1], c_tm1[i + 1]))
                 h_t.append(h_i_t)
                 c_t.append(c_i_t)
@@ -78,6 +80,8 @@ class DeepLSTM(nn.Module):
 
     def forward_next_step(self, x):
         outputs = self.forward(x)
+        if CUDA:
+            return outputs.index_select(1, torch.tensor([outputs.size()[1] - 1]).cuda()).squeeze(dim=1)
         return outputs.index_select(1, torch.tensor([outputs.size()[1] - 1])).squeeze(dim=1)
 
 def forward_pass_batch(net, x, loss):
@@ -98,7 +102,7 @@ def numpy_data_to_pytorch(data):
         output_list.append(pytorch_x)
     return output_list
 
-"""
+
 df = pd.read_csv("TrainingData.csv")
 df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
 df_sorted_transitions = get_transitions_only(df_sorted)
@@ -110,12 +114,12 @@ with open('int_to_id.pickle', 'wb') as handle:
     pickle.dump(int_to_id, handle, protocol=pickle.HIGHEST_PROTOCOL)
 with open('id_to_int.pickle', 'wb') as handle:
     pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
-"""
 
 N_EPOCHS = 500
 TRAIN_LENGTH = 10
 N_PER_USER = 5
 CUDA = torch.cuda.is_available()
+print(CUDA)
 
 df = pd.read_csv("OneHot.csv")
 
@@ -127,42 +131,81 @@ LR = 0.01
 
 test_steps = [1, 2, 3, 4, 9]
 means = np.zeros((len(test_steps),))
+means2 = np.zeros((len(test_steps),))
+means3 = np.zeros((len(test_steps),))
+
 
 for split in range(N_SPLITS):
     print("Split: {}".format(split + 1))
     train_df, test_df = sequence_train_test_split(df, TRAIN_LENGTH)
 
     network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
+    network2 = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
     if CUDA:
         network = network.cuda()
+        network2 = network2.cuda()
     optimizer = optim.Adam(network.parameters(), lr=LR)
+    optimizer2 = optim.Adam(network2.parameters(), lr=LR)
     loss = nn.CrossEntropyLoss()
+    loss2 = nn.CrossEntropyLoss()
 
     best_accuracies = [0 for i in range(len(test_steps))]
+    best_accuracies2 = [0 for i in range(len(test_steps))]
+    best_accuracies3 = [0 for i in range(len(test_steps))]
 
-    for i in range(N_EPOCHS):
-#        print("Epoch: {}".format(i))
+    for i in range (N_EPOCHS):
+        #print("Epoch: {}".format(i))
         optimizer.zero_grad()
+        optimizer2.zero_grad()
         x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
-        x = torch.from_numpy(x).float()
+        if CUDA:
+            x = torch.from_numpy(x).float().cuda()
         train_loss = forward_pass_batch(network, x, loss)
         train_loss.backward()
+        train_loss2 = forward_pass_batch(network2, x, loss2)
+        train_loss2.backward()
 #        print("Training Loss: {}".format(train_loss.item()))
         optimizer.step()
+        optimizer2.step()
         with torch.no_grad():
             for j, n in enumerate(test_steps):
                 data = np.stack(random_sample_data(test_df, n + 1, TRAIN_LENGTH // (n + 1)))
                 x = torch.from_numpy(data[:, :-1]).float()
+                if CUDA:
+                    x=x.cuda()
                 y = np.argmax(data[:, -1], axis=1)
-                output = np.argmax(network.forward_next_step(x).numpy(), axis=1)
+                forward1 = network.forward_next_step(x).cpu().numpy()
+                forward2 = network2.forward_next_step(x).cpu().numpy()
+                output = np.argmax(forward1,axis=1)
+                output2 = np.argmax(forward2,axis=1)
+                inside = np.mean(np.array([forward1, forward2]), axis=0)
+                output3=np.argmax(inside, axis=1)
                 total = y.shape[0]
                 correct = np.sum(np.equal(y, output))
+                correct2 = np.sum(np.equal(y,output2))
+                correct3 = np.sum(np.equal(y, output3))
                 accuracy = correct / total
+                accuracy2 = correct2 / total
+                accuracy3 = correct3 / total
                 if best_accuracies[j] < accuracy:
                     best_accuracies[j] = accuracy
-#                    print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
+#                   print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
+                if best_accuracies2[j] < accuracy2:
+                    best_accuracies2[j] = accuracy2
+                if best_accuracies3[j] < accuracy3:
+                    best_accuracies3[j] = accuracy3
+
     print("Best Accuracies: {}".format(best_accuracies))
+    print("Test Steps: {}".format(test_steps))
+    print("Best Accuracies: {}".format(best_accuracies2))
+    print("Test Steps: {}".format(test_steps))
+    print("Best Accuracies (ensembled): {}".format(best_accuracies3))
     print("Test Steps: {}".format(test_steps))
 
     means += np.array(best_accuracies)
-    print("Mean Accuracies: {}".format(means / (split + 1)))
+    means2 += np.array(best_accuracies2)
+    means3 += np.array(best_accuracies3)
+
+print("Mean Accuracies: {}".format(means / (split + 1)))
+print("Mean Accuracies2: {}".format(means2 / (split + 1)))
+print("Mean Accuracies3 (ensembled): {}".format(means3 / (split + 1)))

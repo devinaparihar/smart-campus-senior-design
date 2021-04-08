@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+#np.random.seed(0)
 
 '''
 function to remove all non-changing adjacent points in a list
