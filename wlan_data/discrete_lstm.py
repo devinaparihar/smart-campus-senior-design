@@ -5,7 +5,7 @@ import pandas as pd
 
 from torch import nn, optim
 
-from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split, split_trajectories, get_durations
+from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split, split_trajectories, get_durations, get_building_data
 
 GRAD_CLIP = 10
 LOSS_GRAD_CLIP = 100
@@ -115,20 +115,28 @@ def numpy_data_to_pytorch(data):
     return output_list
 
 TIMEGAP_THRESH = 3600
-NUM_USERS = 19
+NUM_USERS = 24
 
-df = pd.read_csv("TrainingData.csv")
+#df = pd.read_csv("TrainingData.csv")
+BUILDING_DIRECTORY_PATH = '/locations/locations' #change as needed
+df = get_building_data(BUILDING_DIRECTORY_PATH)
+
 df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
-df_sorted_transitions = split_trajectories(get_transitions_only(df_sorted), TIMEGAP_THRESH, NUM_USERS)
+df_sorted_transitions = get_transitions_only(df_sorted)
+df_sorted_transitions['TIMESTAMP'] = df_sorted_transitions['TIMESTAMP'].apply(lambda x: x/1000) #change from ms to s
+df_split_users = split_trajectories(df_sorted_transitions, TIMEGAP_THRESH, NUM_USERS)
+df_sorted_transitions = df_split_users.sort_values(by=['USERID', 'TIMESTAMP'])
 one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
 
 # get duration in space
 df_sorted_transitions = get_durations(df_sorted_transitions)
 # NEED TO DO SOMETHING ABOUT THESE NON FLOAT THINGS AT SOME POINT
-df_sorted_transitions['DURATION_IN_SPACE_MINUTES'] = df_sorted_transitions['DURATION_IN_SPACE_SECONDS'].apply(lambda x: x/60 if type(x) is float else 1)
+df_sorted_transitions['DURATION_IN_SPACE_MINUTES'] = df_sorted_transitions['DURATION_IN_SPACE_SECONDS'].apply(lambda x: x/60 if type(x) is float else -1)
 
 # append duration as feature to one hot encoded df
 one_hot_df['STAYING_TIME'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
+#one_hot_df = one_hot_df[one_hot_df.duplicated(subset=['USERID'], keep=False)]
+
 
 one_hot_df.to_csv("OneHot.csv", index=False)
 with open('int_to_id.pickle', 'wb') as handle:

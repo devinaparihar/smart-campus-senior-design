@@ -1,6 +1,47 @@
 import numpy as np
 import pandas as pd
 import datetime
+import os
+
+
+def get_as_num_list(list_as_string):
+  nums = []
+  for i in list_as_string.split(","):
+    nums.append(int(i))
+  return nums
+
+
+def get_building_data(raw_data_directory):
+
+  directory = raw_data_directory
+  num_users = 0
+  locs = []
+  tmpstmps = []
+  userids = []
+
+  for filename in os.listdir(directory):
+      if filename.endswith(".csv"):
+        #print("************* " + filename + " *************")
+
+        df = pd.read_csv(directory +"/"+filename, header=None, sep='delimeter')
+        data = pd.DataFrame({'USERID' : [], 'SPACEID': [], 'TIMESTAMP': []})
+        idx = 0
+        for row in df.iterrows():
+          if idx == df.shape[0]:
+            continue
+          else:
+            curr_locations = get_as_num_list(df.loc[idx].tolist()[0])
+            locs.extend(get_as_num_list(df.loc[idx].tolist()[0]))
+            tmpstmps.extend(get_as_num_list(df.loc[idx + 1].tolist()[0]))
+            userids.extend([num_users]*len(curr_locations))
+          idx = idx + 2
+          num_users = num_users + 1
+
+  data.USERID = userids
+  data.SPACEID = locs 
+  data.TIMESTAMP = tmpstmps
+
+  return data
 
 '''
 function to remove all non-changing adjacent points in a list
