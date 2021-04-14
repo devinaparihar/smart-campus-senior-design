@@ -133,7 +133,7 @@ test_steps = [1, 2, 3, 4, 9]
 means = np.zeros((len(test_steps),))
 means2 = np.zeros((len(test_steps),))
 means3 = np.zeros((len(test_steps),))
-
+means4 = np.zeros((len(test_steps),))
 
 for split in range(N_SPLITS):
     print("Split: {}".format(split + 1))
@@ -141,22 +141,29 @@ for split in range(N_SPLITS):
 
     network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
     network2 = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
+    network3 = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
     if CUDA:
         network = network.cuda()
         network2 = network2.cuda()
+        network3 = network3.cuda()
     optimizer = optim.Adam(network.parameters(), lr=LR)
     optimizer2 = optim.Adam(network2.parameters(), lr=LR)
+    optimizer3 = optim.Adam(network3.parameters(), lr=LR)
     loss = nn.CrossEntropyLoss()
     loss2 = nn.CrossEntropyLoss()
+    loss3 = nn.CrossEntropyLoss()
 
     best_accuracies = [0 for i in range(len(test_steps))]
     best_accuracies2 = [0 for i in range(len(test_steps))]
     best_accuracies3 = [0 for i in range(len(test_steps))]
+    best_accuracies4 = [0 for i in range(len(test_steps))]
 
     for i in range (N_EPOCHS):
         #print("Epoch: {}".format(i))
         optimizer.zero_grad()
         optimizer2.zero_grad()
+        optimizer3.zero_grad()
+
         x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
         if CUDA:
             x = torch.from_numpy(x).float().cuda()
@@ -164,9 +171,12 @@ for split in range(N_SPLITS):
         train_loss.backward()
         train_loss2 = forward_pass_batch(network2, x, loss2)
         train_loss2.backward()
+        train_loss3 = forward_pass_batch(network3, x, loss3)
+        train_loss3.backward()
 #        print("Training Loss: {}".format(train_loss.item()))
         optimizer.step()
         optimizer2.step()
+        optimizer3.step()
         with torch.no_grad():
             for j, n in enumerate(test_steps):
                 data = np.stack(random_sample_data(test_df, n + 1, TRAIN_LENGTH // (n + 1)))
@@ -176,25 +186,21 @@ for split in range(N_SPLITS):
                 y = np.argmax(data[:, -1], axis=1)
                 forward1 = network.forward_next_step(x).cpu().numpy()
                 forward2 = network2.forward_next_step(x).cpu().numpy()
-                #print(forward1)
-                #print("1 done")
-             
-                #print(forward2)
-                #print("2 done")
-            
+                forward3 = network3.forward_next_step(x).cpu().numpy()
                 output = np.argmax(forward1,axis=1)
                 output2 = np.argmax(forward2,axis=1)
-                inside = np.mean(np.array([forward1, forward2]), axis=0)
-                #print(inside)
-                #print("3 done")
-                output3=np.argmax(inside, axis=1)
+                output3 = np.argmax(forward3,axis=1)
+                inside = np.mean(np.array([forward1, forward2, forward3]), axis=0)
+                output4=np.argmax(inside, axis=1)
                 total = y.shape[0]
                 correct = np.sum(np.equal(y, output))
                 correct2 = np.sum(np.equal(y,output2))
-                correct3 = np.sum(np.equal(y, output3))
+                correct3 = np.sum(np.equal(y,output3))
+                correct4 = np.sum(np.equal(y, output4))
                 accuracy = correct / total
                 accuracy2 = correct2 / total
                 accuracy3 = correct3 / total
+                accuracy4 = correct4 / total
                 if best_accuracies[j] < accuracy:
                     best_accuracies[j] = accuracy
 #                   print("{}-step Accuracy: {} | {}/{}".format(n, accuracy, correct, total))
@@ -202,17 +208,21 @@ for split in range(N_SPLITS):
                     best_accuracies2[j] = accuracy2
                 if best_accuracies3[j] < accuracy3:
                     best_accuracies3[j] = accuracy3
+                if best_accuracies4[j] < accuracy4:
+                    best_accuracies4[j] = accuracy4
 
+    print("Test Steps: {}".format(test_steps))
     print("Best Accuracies: {}".format(best_accuracies))
-    print("Test Steps: {}".format(test_steps))
     print("Best Accuracies: {}".format(best_accuracies2))
-    print("Test Steps: {}".format(test_steps))
-    print("Best Accuracies (ensembled): {}".format(best_accuracies3))
-    print("Test Steps: {}".format(test_steps))
+    print("Best Accuracies: {}".format(best_accuracies3))
+    print("Best Accuracies (ensembled): {}".format(best_accuracies4))
 
     means += np.array(best_accuracies)
     means2 += np.array(best_accuracies2)
     means3 += np.array(best_accuracies3)
+    means4 += np.array(best_accuracies4)
+
     print("Mean Accuracies1: {}".format(means / (split + 1)))
     print("Mean Accuracies2: {}".format(means2 / (split + 1)))
-    print("Mean Accuracies (ensembled): {}".format(means3 / (split + 1)))
+    print("Mean Accuracies3: {}".format(means3 / (split + 1)))
+    print("Mean Accuracies (ensembled): {}".format(means4 / (split + 1)))
