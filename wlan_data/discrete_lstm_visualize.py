@@ -6,99 +6,10 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 from torch import nn, optim
+from copy import deepcopy
 
-from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split
-
-GRAD_CLIP = 10
-LOSS_GRAD_CLIP = 100
-
-class DeepLSTM(nn.Module):
-
-    def __init__(self, n_hidden_layers, hidden_state_size, dim):
-        super(DeepLSTM, self).__init__()
-        self.n_hidden_layers = n_hidden_layers
-        self.dim = dim
-        self.hidden_state_size = hidden_state_size
-        layers_list = []
-        layers_list.append(nn.LSTMCell(dim, hidden_state_size))
-        for i in range(n_hidden_layers - 1):
-            layers_list.append(nn.LSTMCell(dim + hidden_state_size, hidden_state_size))
-        self.layers = nn.ModuleList(layers_list)
-        self.linear = nn.Linear(dim + hidden_state_size, dim)
-        self.softmax = nn.Softmax(dim=-1)
-
-    def step(self, x_t, h_tm1, c_tm1, final):
-            x_1_t = x_t
-            h_im1_t, c_im1_t = self.layers[0](x_1_t, (h_tm1[0], c_tm1[0]))
-            if h_im1_t.requires_grad:
-                h_im1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-            if c_im1_t.requires_grad and not final:
-                c_im1_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-
-            h_t = [h_im1_t]
-            c_t = [c_im1_t]
-            for i in range(self.n_hidden_layers - 1):
-                x_i_t = torch.cat((x_t, h_im1_t), dim=1)
-                h_i_t, c_i_t = self.layers[i + 1](x_i_t, (h_tm1[i + 1], c_tm1[i + 1]))
-                h_t.append(h_i_t)
-                c_t.append(c_i_t)
-                if h_i_t.requires_grad:
-                    h_i_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-                if c_i_t.requires_grad and not final:
-                    c_i_t.register_hook(lambda x: x.clamp(min=-1 * GRAD_CLIP, max=GRAD_CLIP))
-                h_im1_t = h_i_t
-                c_im1_t = c_i_t
-
-            x_n_t = torch.cat((x_t, h_im1_t), dim=1)
-            outputs = self.softmax(self.linear(x_n_t))
-
-            return outputs, h_t, c_t
-
-    def init_hidden(self, x):
-        h_0 = []
-        c_0 = []
-        for i in range(self.n_hidden_layers):
-            h_i_0 = torch.zeros((x.size()[0], self.hidden_state_size))
-            c_i_0 = torch.zeros((x.size()[0], self.hidden_state_size))
-            if CUDA:
-                h_i_0 = h_i_0.cuda()
-                c_i_0 = c_i_0.cuda()
-            h_0.append(h_i_0)
-            c_0.append(c_i_0)
-        return h_0, c_0
-
-    def forward(self, x):
-        h_tm1, c_tm1 = self.init_hidden(x)
-        output_list = []
-
-        for i in range(x.size()[1]):
-            x_t = torch.squeeze(x.narrow(1, i, 1), 1)
-            output_t, h_tm1, c_tm1 = self.step(x_t, h_tm1, c_tm1, i == x.size()[1] - 1)
-            output_list.append(output_t)
-
-        return torch.stack(output_list, dim=1)
-
-    def forward_next_step(self, x):
-        outputs = self.forward(x)
-        return outputs.index_select(1, torch.tensor([outputs.size()[1] - 1])).squeeze(dim=1)
-
-def forward_pass_batch(net, x, loss):
-    x_train = x.narrow(1, 0, x.size()[1] - 1)
-    y_train = torch.argmax(x.narrow(1, 1, x.size()[1] - 1), dim=2)
-    probs = net.forward(x_train)
-    train_loss = loss(probs.permute(0, 2, 1), y_train)
-    if train_loss.requires_grad:
-        train_loss.register_hook(lambda x: x.clamp(min=-1 * LOSS_GRAD_CLIP, max=LOSS_GRAD_CLIP))
-    return train_loss
-
-def numpy_data_to_pytorch(data):
-    output_list = []
-    for x in data:
-        pytorch_x = torch.from_numpy(x).float()
-        if CUDA:
-            pytorch_x = pytorch_x.cuda()
-        output_list.append(pytorch_x)
-    return output_list
+from disc_tp_data_preprocessing_utils import get_transitions_only, spaceid_to_one_hot, random_sample_data, sequence_train_test_split, split_trajectories, get_durations, get_building_data
+from discrete_lstm import DeepLSTM, location_forward_pass_batch, time_forward_pass_batch, numpy_data_to_pytorch
 
 IMAGE_DIR = './images/'
 
@@ -120,6 +31,28 @@ pos = nx.spring_layout(graph, k=1/2)
 nx.draw(graph, pos=pos, node_size=100)
 plt.savefig(IMAGE_DIR + "original.png")
 
+TIMEGAP_THRESH = 3600
+NUM_USERS = 19
+
+df = pd.read_csv("TrainingData.csv")
+df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
+df_sorted_transitions = split_trajectories(get_transitions_only(df_sorted), TIMEGAP_THRESH, NUM_USERS)
+one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
+
+# get duration in space
+df_sorted_transitions = get_durations(df_sorted_transitions)
+# NEED TO DO SOMETHING ABOUT THESE NON FLOAT THINGS AT SOME POINT
+df_sorted_transitions['DURATION_IN_SPACE_MINUTES'] = df_sorted_transitions['DURATION_IN_SPACE_SECONDS'].apply(lambda x: x/60 if type(x) is float else 1)
+
+# append duration as feature to one hot encoded df
+one_hot_df['STAYING_TIME'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
+
+one_hot_df.to_csv("OneHot.csv", index=False)
+with open('int_to_id.pickle', 'wb') as handle:
+    pickle.dump(int_to_id, handle, protocol=pickle.HIGHEST_PROTOCOL)
+with open('id_to_int.pickle', 'wb') as handle:
+    pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
 N_EPOCHS = 500
 TRAIN_LENGTH = 10
 N_PER_USER = 5
@@ -127,78 +60,134 @@ CUDA = torch.cuda.is_available()
 
 df = pd.read_csv("OneHot.csv")
 
-N_SPLITS = 50
 HIDDEN_STATE_SIZE = 100
 N_LAYERS = 3
-DIM = df.values.shape[1] - 2
-LR = 0.01
+N_LOCATIONS = df.values.shape[1] - 3
+INPUT_DIM = N_LOCATIONS + 1
+
+LOCATION_LR = 0.01
+TIME_LR = 0.005
+
+
+test_steps = [1, 2, 3, 4, 5]
 
 train_df, test_df = sequence_train_test_split(df, TRAIN_LENGTH)
 
-network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, DIM)
-if CUDA:
-    network = network.cuda()
-optimizer = optim.Adam(network.parameters(), lr=LR)
-loss = nn.CrossEntropyLoss()
+location_network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, INPUT_DIM, N_LOCATIONS)
+time_network = DeepLSTM(N_LAYERS, HIDDEN_STATE_SIZE, INPUT_DIM, 1)
+location_optimizer = optim.Adam(location_network.parameters(), lr=LOCATION_LR)
+time_optimizer = optim.Adam(time_network.parameters(), lr=TIME_LR)
 
 for i in range(N_EPOCHS):
     print("Epoch: {}".format(i))
-    optimizer.zero_grad()
+
+    # Train the location prediction network
+    location_optimizer.zero_grad()
     x = np.array(random_sample_data(train_df, TRAIN_LENGTH, N_PER_USER))
     x = torch.from_numpy(x).float()
-    train_loss = forward_pass_batch(network, x, loss)
-    train_loss.backward()
-    print("Training Loss: {}".format(train_loss.item()))
-    optimizer.step()
+    location_loss = location_forward_pass_batch(location_network, x, N_LOCATIONS)
+    location_loss.backward()
+    location_optimizer.step()
+    print("Location Loss: {}".format(location_loss.item()))
 
-VIS_INIT_LEN = 7
+    # Train the time prediction network
+    time_optimizer.zero_grad()
+    time_loss = torch.tensor(0).float()
+    total = 0
+    for j, n in enumerate(test_steps):
+        x = np.array(random_sample_data(train_df, n + 1, TRAIN_LENGTH // (n + 1)))
+        x = torch.from_numpy(x).float()
+        time_loss += time_forward_pass_batch(time_network, x, N_LOCATIONS, n)
+        total += x.size(0)
+    time_loss.backward()
+    time_optimizer.step()
+    print("Average Time Loss: {}".format(time_loss.item() / total), flush=True)
+
+CUDA = torch.cuda.is_available()
+
+NUM_TO_VIS = 3
+VIS_INIT_LEN = 5
 VIS_FINAL_LEN = 10
-N_EXAMPLES = 10
+N_EXAMPLES = 5
+TIME_RESOLUTION = .1
 
-for example in range(N_EXAMPLES):
-    rs = random_sample_data(test_df, VIS_INIT_LEN, 1)
-    data = np.stack([rs[np.random.choice(len(rs))]])
+EXPAND_TIME = 4
+EXPAND_INTERVAL = 0.1
+EXPAND_PROB = 0.8
 
-    coeffs = [1]
-    NUM_EXPAND = 3
-    EXPAND_DEPTH = VIS_FINAL_LEN - VIS_INIT_LEN
-    x = torch.from_numpy(data).float()
+int_to_id = pickle.load(open('int_to_id.pickle', 'rb'))
 
-    with torch.no_grad():
-        for i in range(EXPAND_DEPTH):
-            print(coeffs)
-            inpu = x.numpy()
-            print(inpu.shape)
-            output = network.forward_next_step(x).numpy()
-            new_coeffs = []
-            new_inputs = []
-            for j, y in enumerate(output.tolist()):
-                ind = np.argpartition(y, -1 * NUM_EXPAND)[-1 * NUM_EXPAND:]
-                for k, n in enumerate(ind):
-                    new_coeffs.append(coeffs[j] * y[n])
-                    new_point = np.zeros(inpu[j][0].shape)
-                    new_point[n] = 1
-#                print(inpu[j])
-#                print(np.array([new_point]))
-                    new_inputs.append(np.concatenate([inpu[j], np.array([new_point])], axis=0))
+SOFTMAX = nn.Softmax(dim=-1)
 
-            coeffs = new_coeffs
-            x = torch.from_numpy(np.array(new_inputs)).float()
+nodes_list = graph.nodes()
+node_to_ind = {node: i for i, node in enumerate(nodes_list)}
 
-    int_to_id = pickle.load(open('int_to_id.pickle', 'rb'))
+with torch.no_grad():
+    for example in range(N_EXAMPLES):
+        current_time = 0
+        print("Example {}".format(example))
+        rs = random_sample_data(test_df, VIS_INIT_LEN, 1)
+        data = np.array(rs)[np.random.choice(len(rs), size=NUM_TO_VIS, replace=False).tolist()]
 
-    trajectories = x.numpy().argmax(axis=2)
-    total = np.sum(coeffs)
-    print(total)
-    nodes_list = graph.nodes()
-    node_to_ind = {node: i for i, node in enumerate(nodes_list)}
-    for i in range(VIS_FINAL_LEN):
-        dist = trajectories[:, i]
-        print("Time {}".format(i))
-        color_params = [0 for i in range(len(nodes_list))]
-        for j, v in enumerate(dist):
-            color_params[node_to_ind[int_to_id[v]]] += coeffs[j] / total
-        colors = [(np.clip(2 * (1 - x), 0, 1), np.clip(2 * x, 0, 1), 0) if x != 0 else (0, 0, 0) for x in color_params]
+        times = data[:, VIS_INIT_LEN - 1, N_LOCATIONS]
+        new_times = [np.random.uniform(low=0, high=t) for t in times]
+        data[:, VIS_INIT_LEN - 1, N_LOCATIONS] = np.array(new_times)
 
-        nx.draw(graph, pos=pos, nodelist=nodes_list, node_color=colors, node_size=100)
-        plt.savefig(IMAGE_DIR + "{:02d}_{:02d}.png".format(example, i))
+        coeffs = [1 / NUM_TO_VIS for i in range(NUM_TO_VIS)]
+
+        output_times = time_network.forward_next_step(torch.from_numpy(data).float()).numpy().ravel()
+
+        remaining_times = [(max(0, output_times[i]), data[i]) for i in range(NUM_TO_VIS)]
+        remaining_times.sort(key=lambda x : x[0])
+
+        while current_time < EXPAND_TIME:
+            print("Current time: {}".format(current_time))
+            print("Times: {}".format([tup[0] for tup in remaining_times]))
+            print("Lengths: {}".format([len(tup[1]) for tup in remaining_times]))
+            print("Coefficients: {}".format(coeffs), flush=True)
+            print("Sum of coefficients: {}".format(sum(coeffs)))
+            remove_time = remaining_times[0][0]
+            if remove_time <= EXPAND_INTERVAL:
+                current_time += remove_time
+                overlap = EXPAND_INTERVAL - remove_time
+                seq = remaining_times[0][1]
+                coeff = coeffs[0]
+
+                del remaining_times[0]
+                del coeffs[0]
+                remaining_times = [(remaining_times[i][0] - remove_time, remaining_times[i][1]) for i in range(len(remaining_times))]
+
+                next_location_probs = SOFTMAX(location_network.forward_next_step(torch.from_numpy(seq).float().unsqueeze(0))).numpy().ravel()
+                weight = 0
+                index_list = np.argsort(next_location_probs * -1)
+                list_loc = 0
+                temp_coeffs = []
+                while weight < EXPAND_PROB:
+                    new_seq = deepcopy(seq)
+                    new_transition = np.zeros(INPUT_DIM)
+                    new_transition[index_list[list_loc]] = 1
+                    new_transition[N_LOCATIONS] = overlap
+                    new_seq = np.concatenate([new_seq, [new_transition]], axis=0)
+                    new_time = max(0, time_network.forward_next_step(torch.from_numpy(new_seq).float().unsqueeze(0)).item())
+                    new_seq[-1, N_LOCATIONS] += new_time
+                    remaining_times.append((overlap + new_time, new_seq))
+                    temp_coeffs.append(next_location_probs[index_list[list_loc]])
+                    weight += next_location_probs[index_list[list_loc]]
+                    list_loc += 1
+                coeffs.extend([coeff * temp / sum(temp_coeffs) for temp in temp_coeffs])
+                new_order = np.argsort([tup[0] for tup in remaining_times])
+                remaining_times = [remaining_times[i] for i in new_order]
+                coeffs = [coeffs[i] for i in new_order]
+            else:
+                remaining_times = [(remaining_times[i][0] - EXPAND_INTERVAL, remaining_times[i][1]) for i in range(len(remaining_times))]
+                current_time += EXPAND_INTERVAL
+
+            color_params = [0 for i in range(len(nodes_list))]
+            total = sum(coeffs)
+            for j, tup in enumerate(remaining_times):
+                v = np.argmax(tup[1][-1][:N_LOCATIONS])
+                color_params[node_to_ind[int_to_id[v]]] += coeffs[j] / total
+            colors = [(np.clip(2 * (1 - x), 0, 1), np.clip(2 * x, 0, 1), 0) if x != 0 else (0, 0, 0) for x in color_params]
+
+            nx.draw(graph, pos=pos, nodelist=nodes_list, node_color=colors, node_size=100)
+            plt.savefig(IMAGE_DIR + "{:02d}_{:03d}.png".format(example, int(np.floor(current_time / EXPAND_INTERVAL))))
