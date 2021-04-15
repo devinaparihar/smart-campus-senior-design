@@ -265,6 +265,30 @@ def split_trajectories(data, timegap_seconds_thresh, num_users):
   df_split_users = df_split_users.sort_values(by=['USERID', 'TIMESTAMP'])
   return df_split_users
 
+'''
+leave one out cv split by user
+'''
+
+from sklearn.model_selection import LeaveOneOut
+
+def get_cv_splits(data):
+
+  cv_splits = []
+  user_dfs = []
+
+  for user, df_user in data.groupby('USERID'):
+    user_dfs.append(df_user)
+
+
+  loo = LeaveOneOut()
+  for train_index, test_index in loo.split(np.array(user_dfs)):
+    print("train idx: {}, test idx: {}".format(train_index, test_index))
+    X_train, X_test = np.array(user_dfs)[train_index], np.array(user_dfs)[test_index]
+    curr_split = [X_train, X_test]
+    cv_splits.append(curr_split)
+
+  return cv_splits
+
 
 if __name__ == "__main__":
     # Example
