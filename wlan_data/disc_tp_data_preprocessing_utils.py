@@ -21,8 +21,7 @@ def get_building_data(raw_data_directory):
 
   for filename in os.listdir(directory):
       if filename.endswith(".csv"):
-        #print("************* " + filename + " *************")
-
+        print("************* " + filename + " *************")
         df = pd.read_csv(directory +"/"+filename, header=None, sep='delimeter')
         data = pd.DataFrame({'USERID' : [], 'SPACEID': [], 'TIMESTAMP': []})
         idx = 0
@@ -38,7 +37,7 @@ def get_building_data(raw_data_directory):
           num_users = num_users + 1
 
   data.USERID = userids
-  data.SPACEID = locs 
+  data.SPACEID = locs
   data.TIMESTAMP = tmpstmps
 
   return data
@@ -50,7 +49,7 @@ def remove_stationary(list1, indices_list1):
   i = 0
   while i < (len(list1) - 1):
       # Modifying this to keep only biggest building data points
-      if list1[i] == list1[i+1] or list1[i] <= 30 or list1[i] == 147 or list1[i + 1] == 147:
+      if list1[i] == list1[i+1]:
           del list1[i]
           del indices_list1[i]
       else:
@@ -60,7 +59,7 @@ def remove_stationary(list1, indices_list1):
 takes a sorted dataframe(by time) and returns a sorted dataframe (by user and time) 
 that contains transitions only.
 '''
-def get_transitions_only(df_sorted):
+def get_transitions_only(df_sorted, min_len):
   tot = 0
   df_indexes_to_keep = []
   appended_df = []
@@ -69,6 +68,8 @@ def get_transitions_only(df_sorted):
     spaceIDsList = df_user['SPACEID'].tolist()
     # remove the non-changing location points and respective indices(stationary)
     remove_stationary(spaceIDsList, spaceIDsIndexesList)
+    if len(spaceIDsList) < min_len:
+        continue
     df_indexes_to_keep.extend(spaceIDsIndexesList)
     df_curr = df_user.loc[spaceIDsIndexesList]
     appended_df.append(df_curr)
@@ -111,7 +112,10 @@ def sequence_train_test_split(df, length):
     for user, df_user in df.groupby('USERID'):
         df_len = len(df_user)
         if df_len < 3 * length:
-            train_users.append(df_user)
+            if np.random.uniform() < 0.1:
+                test_users.append(df_user)
+            else:
+                train_users.append(df_user)
         else:
             user_sample_pool.append(df_user)
 
@@ -124,7 +128,10 @@ def sequence_train_test_split(df, length):
         seq_idx = np.random.choice(np.arange(length, len(sample_df) - length))
         a = sample_df.iloc[0:seq_idx]
         if len(a) < 3 * length:
-            train_users.append(a)
+            if np.random.uniform() < 0.1:
+                test_users.append(a)
+            else:
+                train_users.append(a)
         else:
             user_sample_pool.append(a)
 
@@ -151,9 +158,10 @@ def random_sample_data(df, length, num_per_user):
         df_len = len(df_user)
         mat = df_user.values[:, 2:]
 
-        if df_len < length * num_per_user:
+        if df_len < length:
             continue
-        indices = np.random.choice(df_len - length + 1, size=num_per_user, replace=False)
+        sample_size = min(num_per_user, df_len // length)
+        indices = np.random.choice(df_len - length + 1, size=sample_size, replace=False)
         for i in indices:
             data.append(mat[i:i+length])
     return data

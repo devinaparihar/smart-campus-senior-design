@@ -117,8 +117,9 @@ def numpy_data_to_pytorch(data):
         output_list.append(pytorch_x)
     return output_list
 
-    TIMEGAP_THRESH = 3600
-    NUM_USERS = 24
+TIMEGAP_THRESH = 3600
+NUM_USERS = 24
+MIN_LEN = 5
 
 if __name__ == "__main__":
     #df = pd.read_csv("TrainingData.csv")
@@ -126,10 +127,11 @@ if __name__ == "__main__":
     df = get_building_data(BUILDING_DIRECTORY_PATH)
 
     df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
-    df_sorted_transitions = get_transitions_only(df_sorted)
+    df_sorted_transitions = get_transitions_only(df_sorted, 5)
     df_sorted_transitions['TIMESTAMP'] = df_sorted_transitions['TIMESTAMP'].apply(lambda x: x/1000) #change from ms to s
-    df_split_users = split_trajectories(df_sorted_transitions, TIMEGAP_THRESH, NUM_USERS)
-    df_sorted_transitions = df_split_users.sort_values(by=['USERID', 'TIMESTAMP'])
+    #df_split_users = split_trajectories(df_sorted_transitions, TIMEGAP_THRESH, NUM_USERS)
+    #df_sorted_transitions = df_split_users.sort_values(by=['USERID', 'TIMESTAMP'])
+    df_sorted_transitions = df_sorted_transitions.sort_values(by=['USERID', 'TIMESTAMP'])
     one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
 
     # get duration in space
@@ -139,6 +141,8 @@ if __name__ == "__main__":
 
     # append duration as feature to one hot encoded df
     one_hot_df['STAYING_TIME'] = df_sorted_transitions['DURATION_IN_SPACE_MINUTES'].tolist()
+    print(one_hot_df)
+    print(len(one_hot_df))
     print(int_to_id)
     #one_hot_df = one_hot_df[one_hot_df.duplicated(subset=['USERID'], keep=False)]
 
@@ -150,8 +154,8 @@ if __name__ == "__main__":
         pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     N_EPOCHS = 500
-    TRAIN_LENGTH = 10
-    N_PER_USER = 2
+    TRAIN_LENGTH = 5
+    N_PER_USER = 4
 
 
 
@@ -164,9 +168,9 @@ if __name__ == "__main__":
     N_LOCATIONS = df.values.shape[1] - 3
     INPUT_DIM = N_LOCATIONS + 1
     LOCATION_LR = 0.01
-    TIME_LR = 0.005
+    TIME_LR = 0.001
 
-    test_steps = [1, 2, 3, 4, 9]
+    test_steps = [1, 2, 3, 4]
     mean_accuracies = np.zeros((len(test_steps),))
     mean_errors = np.zeros((len(test_steps),))
 
@@ -199,10 +203,13 @@ if __name__ == "__main__":
             # Train the time prediction network
             time_optimizer.zero_grad()
             time_loss = torch.tensor(0).float()
+            total_time_samples = 0
             for j, n in enumerate(test_steps):
                 x = np.array(random_sample_data(train_df, n + 1, TRAIN_LENGTH // (n + 1)))
+                total_time_samples += x.shape[0]
                 x = torch.from_numpy(x).float()
                 time_loss += time_forward_pass_batch(time_network, x, N_LOCATIONS, n)
+            time_loss /= total_time_samples
             time_loss.backward()
             time_optimizer.step()
             print("Time Loss: {}".format(time_loss.item()), flush=True)
@@ -238,8 +245,9 @@ if __name__ == "__main__":
                         best_errors[j] = error
                         print("{}-step Test Error: {}".format(n, error))
 
-        print("Best Accuracies: {}".format(best_accuracies))
-        print("Test Steps: {}".format(test_steps))
+            print("Best Accuracies: {}".format(best_accuracies))
+            print("Best Errors: {}".format(best_errors))
+            print("Test Steps: {}".format(test_steps))
 
         mean_accuracies += np.array(best_accuracies)
         mean_errors += np.array(best_errors)

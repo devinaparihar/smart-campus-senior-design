@@ -14,6 +14,7 @@ from discrete_lstm import DeepLSTM, location_forward_pass_batch, time_forward_pa
 IMAGE_DIR = './images/'
 
 # Create Graph
+"""
 df = pd.read_csv("TrainingData.csv")
 graph = nx.Graph()
 
@@ -30,13 +31,21 @@ for user in range(1, df['USERID'].max() + 1):
 pos = nx.spring_layout(graph, k=1/2)
 nx.draw(graph, pos=pos, node_size=100)
 plt.savefig(IMAGE_DIR + "original.png")
+"""
 
 TIMEGAP_THRESH = 3600
-NUM_USERS = 19
+NUM_USERS = 24
 
-df = pd.read_csv("TrainingData.csv")
+#df = pd.read_csv("TrainingData.csv")
+BUILDING_DIRECTORY_PATH = './locations/' #change as needed
+df = get_building_data(BUILDING_DIRECTORY_PATH)
+
 df_sorted = df.sort_values(by=['TIMESTAMP', 'USERID'])
-df_sorted_transitions = split_trajectories(get_transitions_only(df_sorted), TIMEGAP_THRESH, NUM_USERS)
+df_sorted_transitions = get_transitions_only(df_sorted, 5)
+df_sorted_transitions['TIMESTAMP'] = df_sorted_transitions['TIMESTAMP'].apply(lambda x: x/1000) #change from ms to s
+#df_split_users = split_trajectories(df_sorted_transitions, TIMEGAP_THRESH, NUM_USERS)
+#df_sorted_transitions = df_split_users.sort_values(by=['USERID', 'TIMESTAMP'])
+df_sorted_transitions = df_sorted_transitions.sort_values(by=['USERID', 'TIMESTAMP'])
 one_hot_df, int_to_id, id_to_int = spaceid_to_one_hot(df_sorted_transitions)
 
 # get duration in space
@@ -54,7 +63,7 @@ with open('id_to_int.pickle', 'wb') as handle:
     pickle.dump(id_to_int, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 N_EPOCHS = 500
-TRAIN_LENGTH = 10
+TRAIN_LENGTH = 5
 N_PER_USER = 5
 CUDA = torch.cuda.is_available()
 
@@ -69,7 +78,7 @@ LOCATION_LR = 0.01
 TIME_LR = 0.005
 
 
-test_steps = [1, 2, 3, 4, 5]
+test_steps = [1, 2, 3, 4]
 
 train_df, test_df = sequence_train_test_split(df, TRAIN_LENGTH)
 
@@ -106,8 +115,7 @@ for i in range(N_EPOCHS):
 CUDA = torch.cuda.is_available()
 
 NUM_TO_VIS = 3
-VIS_INIT_LEN = 5
-VIS_FINAL_LEN = 10
+VIS_INIT_LEN = 4
 N_EXAMPLES = 5
 TIME_RESOLUTION = .1
 
@@ -119,8 +127,8 @@ int_to_id = pickle.load(open('int_to_id.pickle', 'rb'))
 
 SOFTMAX = nn.Softmax(dim=-1)
 
-nodes_list = graph.nodes()
-node_to_ind = {node: i for i, node in enumerate(nodes_list)}
+#nodes_list = graph.nodes()
+#node_to_ind = {node: i for i, node in enumerate(nodes_list)}
 
 with torch.no_grad():
     for example in range(N_EXAMPLES):
@@ -140,6 +148,7 @@ with torch.no_grad():
         remaining_times = [(max(0, output_times[i]), data[i]) for i in range(NUM_TO_VIS)]
         remaining_times.sort(key=lambda x : x[0])
 
+        moments = []
         while current_time < EXPAND_TIME:
             print("Current time: {}".format(current_time))
             print("Times: {}".format([tup[0] for tup in remaining_times]))
@@ -182,12 +191,25 @@ with torch.no_grad():
                 remaining_times = [(remaining_times[i][0] - EXPAND_INTERVAL, remaining_times[i][1]) for i in range(len(remaining_times))]
                 current_time += EXPAND_INTERVAL
 
-            color_params = [0 for i in range(len(nodes_list))]
+#            color_params = [0 for i in range(len(nodes_list))]
             total = sum(coeffs)
+            values = {}
             for j, tup in enumerate(remaining_times):
                 v = np.argmax(tup[1][-1][:N_LOCATIONS])
+                space_id = int_to_id[v]
+                if space_id not in values.keys():
+                    values[space_id] = 0
+                values[space_id] += coeffs[j] / total
+            moments.append(values)
+
+        with open("./examples/example{}.pickle".format(example), 'wb') as handle:
+            pickle.dump(moments, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print(moments)
+
+        """
                 color_params[node_to_ind[int_to_id[v]]] += coeffs[j] / total
             colors = [(np.clip(2 * (1 - x), 0, 1), np.clip(2 * x, 0, 1), 0) if x != 0 else (0, 0, 0) for x in color_params]
 
             nx.draw(graph, pos=pos, nodelist=nodes_list, node_color=colors, node_size=100)
             plt.savefig(IMAGE_DIR + "{:02d}_{:03d}.png".format(example, int(np.floor(current_time / EXPAND_INTERVAL))))
+        """
